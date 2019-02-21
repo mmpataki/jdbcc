@@ -13,8 +13,7 @@ how to use:
 1. Compile the program if not done.
 	# unzip jdbcc.zip
 	# cd jdbcc
-	# export INFA_HOME=/path/to/infa/home
-        # ./compile.sh
+	# javac JDBCClient.java
 2. Run the program.
 	# java -cp ".:/path/to/your/jdbc/jars" JDBCClient \
 		-d <driver-name>			  \
@@ -40,13 +39,13 @@ how to use:
 1. Compile the program if not done.
         # unzip jdbcc.zip
         # cd jdbcc
-        # export INFA_HOME=/path/to/infa/home
-        # ./compile.sh
+        # export HADOOP_LIBS=/path/to/hadoop/home
+        # javac -cp ".:$HADOOP_LIBS/*" KUtil.java
 2. Know the main class name of the program you want to run. In this
    example I assume it as "JDBCClient". We are using this JDBCClient
    to connect to a secure Hive DB
 3. Let the KUtil run you program in Hadoop Kerberos context
-        # java -cp . KUtil                      \
+        # java -cp ".:$HADOOP_LIBS/*" KUtil     \
                 -u <kerberos-principal-name>    \
                 -k </path/to/keytab/file>       \
                 JDBCClient                      \
