@@ -1,5 +1,3 @@
-//package com.informatica.gcs.tools;
-
 import java.util.Date;
 import java.util.Scanner;
 
