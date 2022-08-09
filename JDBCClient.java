@@ -1,10 +1,9 @@
 import java.io.*;
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
-import java.lang.reflect.Method;
 import java.sql.*;
-import java.util.Date;
 import java.util.*;
+import java.util.Date;
+import java.lang.annotation.*;
+import java.lang.reflect.Method;
 import java.util.stream.Collectors;
 
 public class JDBCClient {
@@ -81,11 +80,11 @@ public class JDBCClient {
                         "mode and sql mode otherwise. JDBC APIs can be executed on the shell\n" +
                         "variables (listed at the end).\n" +
                         "\n" +
-                        "Here are some examples\n" +
+                        "Here are some examples for JDBC API execution\n" +
                         "  !md.getSchemas(null, \"MPATAKI%\");\n" +
-                        "  !md.getTables(null, \"MPATAKI%\", null);\n" +
+                        "  !md.getTables(null, \"MPATAKI%\", null, null);\n" +
                         "\n\n" +
-                        "All the inputs should end with ; (semi-colon)\n\n" +
+                        "All the inputs should end with ; (semicolon)\n\n" +
                         "Methods: (use !help(\"method\"); to get help on methods)\n" +
                         methods +
                         "\n\nShell variables: (use !variable; to print it) \n" +
@@ -101,7 +100,6 @@ public class JDBCClient {
                     log(on[0] + " is not exposed");
                 }
                 return String.format(
-
                         "// %s\n" +
                                 "%s(%s)\n",
                         method.getAnnotation(Exposed.class).value(),
@@ -173,11 +171,11 @@ public class JDBCClient {
     }
 
     static Object[][] registeredArgs = new Object[][]{
-            {"-d", "driver class name", true, null},
+            {"-d", "driver class name", false, null},
             {"-c", "JDBC connection string", true},
             {"-u", "username", true},
             {"-p", "password", true},
-            {"-r", "true|false", false},
+            {"-r", "record file name prefix", false},
             {"-t", "[column_name=transformerClassName;]+", false}
     };
 
@@ -196,7 +194,7 @@ public class JDBCClient {
     static HashMap<String, Transformer> transformers = new HashMap<>();
 
     public static void main(String args[]) throws Exception {
-        if (args.length > 0 && args[0].equals("-help")) {
+        if (args.length > 0 && args[0].equals("--help")) {
             boolean required;
             System.err.println("Usage : java JDBCClient <options>");
             System.err.println("Options: ");
@@ -204,6 +202,7 @@ public class JDBCClient {
                 required = (boolean) regArg[2];
                 System.err.println("\t" + (required ? "" : "[") + regArg[0] + (required ? "" : "]") + " <" + regArg[1] + ">");
             }
+            return;
         }
         System.err.println("Passed args : " + Arrays.toString(args));
         new JDBCClient(args).shell();
@@ -239,6 +238,10 @@ public class JDBCClient {
         record = argMap.get("-r");
 
         System.err.println("Parsed args : " + argMap);
+
+        if(driver != null) {
+            Class.forName(driver);
+        }
 
         if (record != null) {
             conf.record = true;
@@ -439,7 +442,6 @@ public class JDBCClient {
 
         try {
             while (rset.next()) {
-                debug("next");
                 $("<tr>");
                 for (int i = 0; i < numCols; ++i) {
                     Object data = null;
@@ -464,6 +466,7 @@ public class JDBCClient {
             ex.printStackTrace();
         }
         $("</table>");
+        System.out.println();
     }
 
     private static void log(Object o) {
