@@ -1,9 +1,11 @@
 import java.io.*;
-import java.sql.*;
-import java.util.*;
-import java.util.Date;
-import java.lang.annotation.*;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.sql.*;
+import java.util.Date;
+import java.util.*;
 import java.util.stream.Collectors;
 
 public class JDBCClient {
@@ -13,24 +15,203 @@ public class JDBCClient {
         String value();
     }
 
-    public interface Transformer {
-        public String transform(Object o);
+
+    @Retention(RetentionPolicy.RUNTIME)
+    public @interface Argument {
+        String[] keys();
+
+        String help();
+
+        boolean required() default false;
+
+        boolean multivalued() default false;
+
+        boolean sensitive() default false;
+
+        String parser() default "defaultParser";
     }
 
-    public static class Configuration {
-        public boolean printResults = true;
-        public boolean record;
-        public boolean debug;
+    public interface Transformer {
+        String transform(Object o) throws Exception;
+    }
+
+    public class BClobToString implements Transformer {
+        @Override
+        public String transform(Object o) throws Exception {
+            if (o instanceof Blob) {
+                return new String(((Blob) o).getBytes(1l, (int) ((Blob) o).length()));
+            }
+            if (o instanceof Clob) {
+                Clob clob = (Clob) o;
+                StringBuilder sb = new StringBuilder((int) clob.length());
+                Reader r = clob.getCharacterStream();
+                char[] cbuf = new char[1024];
+                int n;
+                while ((n = r.read(cbuf, 0, cbuf.length)) != -1) {
+                    sb.append(cbuf, 0, n);
+                }
+                return sb.toString();
+            }
+            return o.toString();
+        }
+    }
+
+    // https://gist.github.com/mmpataki/8514550e3b8aa97f3e0cd98011e4e553
+    public class Configuration {
+
+        // connect required args
+        @Argument(keys = {"-c", "--url"}, required = true, help = "jdbc url")
+        private String url;
+
+        @Argument(keys = {"-u", "--user"}, required = true, help = "username")
+        private String user;
+
+        @Argument(keys = {"-p", "--password"}, required = true, sensitive = true, help = "password")
+        private String password;
+
+        @Argument(keys = {"-d", "--driver"}, help = "JDBC Driver class name")
+        private String driver;
+
+
+        @Exposed("Transformers")
+        @Argument(keys = {"-t", "--transformer"}, multivalued = true, parser = "txParser", help = "Column transformers, specify as columnName=transformerClassName")
+        public final HashMap<String, Transformer> transformers = new LinkedHashMap<>();
+
+
+        // output control
+        @Argument(keys = {"-l", "--limit"}, help = "Number of records to print from result set")
+        @Exposed("The number of records to print from a result set")
+        public int resultPrintLimit = 10;
+
+        @Argument(keys = {"-r", "--record"}, help = "Enables recording to HTML file")
+        @Exposed("Record to an HTML file")
+        public boolean record = false;
+
+        @Argument(keys = {"-x", "--debug"}, help = "Enables debug logging")
+        @Exposed("Enable debug logging")
+        public boolean debug = false;
+
+        @Argument(keys = {"-h", "--help"}, help = "Prints help")
+        private boolean help;
+
+        // input control
+        @Argument(keys = {"-i", "--input"}, help = "Input file (Can have SQL or shell commands)")
+        private String inputFile;
+
+        @Argument(keys = {"--props"}, help = "Config props file")
+        private String propsFile;
+
+        @Argument(keys = {"--nolinenum"}, help = "Disables line number printing in shell")
+        @Exposed("Disable line numbers in shell")
+        public boolean noLineNumbers;
+
+        @Argument(keys = {"--printProps"}, help = "Prints sample props file")
+        private boolean printProps = false;
+
+        // internal for debugging
+        boolean __debug = false;
 
         @Override
         public String toString() {
-            return Arrays.stream(getClass().getFields()).map(f -> {
+            return Arrays.stream(getClass().getDeclaredFields()).filter(f -> __debug || f.isAnnotationPresent(Exposed.class)).map(f -> {
                 try {
                     return String.format("%s = %s", f.getName(), f.get(this));
                 } catch (IllegalAccessException e) {
                     return "";
                 }
             }).collect(Collectors.joining("\n"));
+        }
+
+        @SuppressWarnings("unchecked")
+        public void txParser(Field f, Configuration c, String s) throws Exception {
+            if (f.get(c) == null) f.set(c, new HashMap<>());
+            if (s == null || s.isEmpty()) return;
+            ((Map) f.get(c)).put(s.substring(0, s.indexOf("=")), (Transformer) Class.forName(s.substring(s.indexOf('=') + 1)).newInstance());
+        }
+
+        public void defaultParser(Field f, Configuration c, String s) throws Exception {
+            Object val = null;
+            if (Integer.TYPE.isAssignableFrom(f.getType())) {
+                val = Integer.parseInt(s);
+            } else if (Long.TYPE.isAssignableFrom(f.getType())) {
+                val = Long.parseLong(s);
+            } else if (Double.TYPE.isAssignableFrom(f.getType())) {
+                val = Double.parseDouble(s);
+            } else if (Float.TYPE.isAssignableFrom(f.getType())) {
+                val = Float.parseFloat(s);
+            } else if (Boolean.TYPE.isAssignableFrom(f.getType())) {
+                val = s == null || Boolean.valueOf(s);
+            } else {
+                val = s.isEmpty() ? null : s;
+            }
+            f.set(c, val);
+        }
+
+        private void set(Field f, String val) throws Exception {
+            getClass().getMethod(f.getAnnotation(Argument.class).parser(), Field.class, Configuration.class, String.class)
+                    .invoke(this, f, this, val);
+        }
+
+        public Configuration(String args[]) throws Exception {
+            Map<String, Field> fields = new LinkedHashMap<>();
+            Arrays.stream(Configuration.class.getDeclaredFields()).filter(f -> f.isAnnotationPresent(Argument.class)).forEach(f -> {
+                Argument arg = f.getAnnotation(Argument.class);
+                for (String key : arg.keys())
+                    fields.put(key, f);
+            });
+            for (int i = 0; i < args.length; i++) {
+                String arg = args[i];
+                if (!fields.containsKey(arg)) {
+                    log("unknown argument: " + arg);
+                    System.exit(0);
+                }
+                Field field = fields.get(arg);
+                set(field, field.getType().isAssignableFrom(boolean.class) ? "true" : args[++i]);
+            }
+            if (propsFile != null) {
+                Properties props = new Properties();
+                props.load(new FileReader(propsFile));
+                for (Map.Entry<Object, Object> entry : props.entrySet()) {
+                    set(getClass().getDeclaredField(entry.getKey().toString()), entry.getValue().toString());
+                }
+            }
+            if (printProps) {
+                for (Field f : Configuration.class.getDeclaredFields()) {
+                    if (f.isAnnotationPresent(Argument.class)) {
+                        Argument arg = f.getAnnotation(Argument.class);
+                        System.out.printf("# %s\n", arg.required() ? "REQUIRED" : "OPTIONAL");
+                        System.out.printf("# %s\n", f.getAnnotation(Argument.class).help());
+                        boolean noVal = f.get(this) == null || Map.class.isAssignableFrom(f.getType()) || Collection.class.isAssignableFrom(f.getType());
+                        System.out.printf("%s=%s\n", f.getName(), noVal ? "" : f.get(this));
+                        System.out.println();
+                    }
+                }
+                System.exit(0);
+            }
+            if (!help) {
+                for (Field f : fields.values()) {
+                    Argument argConf = f.getAnnotation(Argument.class);
+                    if (!(f.getAnnotation(Argument.class).required() && f.get(this) == null)) continue;
+                    System.out.printf("Enter %s (%s): ", f.getName(), argConf.help());
+                    set(f, (argConf.sensitive()) ? new String(System.console().readPassword()) : sc.readLine());
+                }
+            }
+        }
+
+        public String getHelp() {
+            StringBuilder sb = new StringBuilder();
+            sb.append(String.format("   %-35s %4s %8s %s\n", "switch", "reqd", "multiple", "help"));
+            Arrays.stream(getClass().getDeclaredFields()).filter(f -> f.isAnnotationPresent(Argument.class)).forEach(f -> {
+                Argument arg = f.getAnnotation(Argument.class);
+                sb.append(String.format(
+                        "   %-35s %3s   %4s    %s\n",
+                        String.join(", ", arg.keys()) + (f.getType().isAssignableFrom(boolean.class) ? "" : String.format(" <%s>", f.getName())),
+                        arg.required() ? "*" : " ",
+                        arg.multivalued() ? "*" : " ",
+                        arg.help()
+                ));
+            });
+            return sb.toString();
         }
     }
 
@@ -123,12 +304,13 @@ public class JDBCClient {
             stmt = cli.stmt;
             md = conn.getMetaData();
         }
+
     }
 
 
     boolean runTimeHook = false;
     private Connection conn = null;
-    private Configuration conf = new Configuration();
+    private Configuration conf;
     private ResultSet rs;
     private Statement stmt;
 
@@ -170,116 +352,70 @@ public class JDBCClient {
         return stmt.execute(query);
     }
 
-    static Object[][] registeredArgs = new Object[][]{
-            {"-d", "driver class name", false, null},
-            {"-c", "JDBC connection string", true},
-            {"-u", "username", true},
-            {"-p", "password", true},
-            {"-r", "record file name prefix", false},
-            {"-t", "[column_name=transformerClassName;]+", false}
-    };
-
-
-    String url;
-    String user;
-    String driver;
-    String record;
-    String password;
     static long start, end;
-    String txPlugins;
-
     private FileWriter fw;
-    private Scanner sc;
-    HashMap<String, String> argMap = new HashMap<>();
-    static HashMap<String, Transformer> transformers = new HashMap<>();
+    private BufferedReader sc;
 
     public static void main(String args[]) throws Exception {
-        if (args.length > 0 && args[0].equals("--help")) {
-            boolean required;
-            System.err.println("Usage : java JDBCClient <options>");
-            System.err.println("Options: ");
-            for (Object[] regArg : registeredArgs) {
-                required = (boolean) regArg[2];
-                System.err.println("\t" + (required ? "" : "[") + regArg[0] + (required ? "" : "]") + " <" + regArg[1] + ">");
-            }
-            return;
-        }
-        System.err.println("Passed args : " + Arrays.toString(args));
         new JDBCClient(args).shell();
     }
 
-    public JDBCClient(String[] args) throws ClassNotFoundException, InstantiationException, IllegalAccessException {
+    public JDBCClient(String[] args) throws Exception {
 
-        sc = new Scanner(System.in);
+        sc = new BufferedReader(new InputStreamReader(System.in));
+        conf = new Configuration(args);
 
-        /* register the args */
-        for (Object[] requiredArg : registeredArgs) {
-            argMap.put((String) requiredArg[0], null);
+        if (conf.inputFile != null) {
+            sc.close();
+            System.setIn(new FileInputStream(conf.inputFile));
+            sc = new BufferedReader(new InputStreamReader(System.in));
         }
 
-        /* parse the args */
-        for (int i = 0; i < args.length; i += 2) {
-            argMap.put(args[i], args[i + 1]);
+        if (conf.help) {
+            System.err.println("Usage : java JDBCClient <options>");
+            System.err.println("Options: ");
+            System.out.println(conf.getHelp());
+            System.exit(0);
         }
 
-        /* ask for the left out args, if they are required */
-        for (Object[] regArg : registeredArgs) {
-            if (((Boolean) regArg[2]) && argMap.get((String) regArg[0]) == null) {
-                System.out.print("Enter " + regArg[1] + ": ");
-                argMap.put((String) regArg[0], sc.nextLine());
-            }
+        if (conf.driver != null) {
+            Class.forName(conf.driver);
         }
 
-        url = argMap.get("-c");
-        user = argMap.get("-u");
-        driver = argMap.get("-d");
-        password = argMap.get("-p");
-        txPlugins = argMap.get("-t");
-        record = argMap.get("-r");
-
-        System.err.println("Parsed args : " + argMap);
-
-        if(driver != null) {
-            Class.forName(driver);
-        }
-
-        if (record != null) {
-            conf.record = true;
-            String recordFile = "jdbcc_record_" + record + "_" + ((new Date()).getTime()) + ".html";
+        if (conf.record) {
+            String recordFile = "jdbcc_record_" + "_" + ((new Date()).getTime()) + ".html";
             try {
                 fw = new FileWriter(recordFile);
             } catch (Exception e) {
-                System.out.println("Failed to open " + recordFile + " " + e.getMessage());
+                log("Failed to open " + recordFile + " " + e.getMessage());
                 e.printStackTrace();
             }
             log("Logging to " + recordFile);
         }
 
-        System.err.println("Registering convertor plugins...");
-        if (txPlugins == null || txPlugins.isEmpty())
-            return;
-        String plugins[] = txPlugins.split(";");
-        for (String plugin : plugins) {
-            String kvp[] = plugin.split("=");
-            Class<?> txplugin = Class.forName(kvp[1]);
-            transformers.put(kvp[0], (Transformer) txplugin.newInstance());
-        }
+        conf.transformers.put("BLOB", new BClobToString());
+        conf.transformers.put("CLOB", new BClobToString());
     }
 
     public void shell() throws Exception {
 
-        connect(url, user, password);
+        connect(conf.url, conf.user, conf.password);
         stmt = conn.createStatement();
 
-        log("Type help; for help");
+        log("Type help; for shell help");
 
         do {
             boolean status = false;
             Object result = null;
-            String query = readQuery().trim();
+            String query = readQuery();
+
+            if (query == null)
+                return;
+
+            query = query.trim();
 
             debug("Text read from console: " + query);
-            if(query.equals("help")) {
+            if (query.equals("help")) {
                 query = "!help()";
             }
 
@@ -310,7 +446,7 @@ public class JDBCClient {
                     if (sql && ((boolean) result)) {
                         rs = stmt.getResultSet();
                     }
-                    if (rs != null && conf.printResults) {
+                    if (rs != null) {
                         printResult(query, etime, rs);
                     } else {
                         System.out.println(result);
@@ -379,7 +515,7 @@ public class JDBCClient {
         Process exec = Runtime.getRuntime().exec(javac + " " + jfile);
         BufferedReader br = new BufferedReader(new InputStreamReader(exec.getErrorStream()));
         String line;
-        while((line = br.readLine()) != null) {
+        while ((line = br.readLine()) != null) {
             log(line);
         }
         exec.waitFor();
@@ -401,7 +537,7 @@ public class JDBCClient {
 
     private void printResult(String query, long time, ResultSet rset) throws Exception {
 
-        if (rset == null)
+        if (rset == null || conf.resultPrintLimit == 0)
             return;
 
         $("<pre>")
@@ -418,7 +554,7 @@ public class JDBCClient {
         ResultSetMetaData rsmd = rset.getMetaData();
         for (numCols = 0; true; numCols++) {
             try {
-                coln = rsmd.getColumnName(numCols + 1);
+                coln = String.format("%s (%s)", rsmd.getColumnName(numCols + 1), rsmd.getColumnTypeName(numCols + 1));
                 cols.add(coln);
                 maxsize = Math.max(maxsize, coln.length());
             } catch (Exception e) {
@@ -440,8 +576,10 @@ public class JDBCClient {
         }
         System.out.println();
 
+        int rows = 0;
         try {
-            while (rset.next()) {
+            pstart();
+            for (; (rows != conf.resultPrintLimit) && rset.next(); rows++) {
                 $("<tr>");
                 for (int i = 0; i < numCols; ++i) {
                     Object data = null;
@@ -449,7 +587,10 @@ public class JDBCClient {
                         data = rset.getObject(i + 1);
                         Transformer tx = null;
                         if (data != null) {
-                            tx = transformers.get(cols.get(i));
+                            tx = conf.transformers.get(cols.get(i));
+                            if (tx == null) {
+                                tx = conf.transformers.get(rsmd.getColumnTypeName(i + 1).toUpperCase());
+                            }
                         }
                         if (tx != null) {
                             data = tx.transform(data);
@@ -467,22 +608,29 @@ public class JDBCClient {
         }
         $("</table>");
         System.out.println();
+        pend(String.format("%d rows (%s), time", rows, ((conf.resultPrintLimit == -1 || rows < conf.resultPrintLimit) ? "all" : "limited")));
     }
 
     private static void log(Object o) {
         System.out.println(o.toString());
     }
 
-    private String readQuery() {
+    private String readQuery() throws IOException {
         String line, prompt = "jdbcc> ";
         StringBuilder sb = new StringBuilder();
+        int i = 1;
         do {
             System.out.print(prompt);
-            line = sc.nextLine().trim();
+            line = sc.readLine();
+            if (line == null)
+                break;
+            if (conf.inputFile != null) {
+                System.out.println(line);
+            }
             sb.append(line).append(" ");
-            prompt = "";
+            prompt = conf.noLineNumbers ? "" : String.format("%5d. ", ++i);
         } while (line.trim().equals("") || !(line.charAt(line.length() - 1) == ';'));
-        return sb.deleteCharAt(sb.length() - 2).toString();
+        return sb.toString().trim().isEmpty() ? null : sb.deleteCharAt(sb.length() - 2).toString();
     }
 
     private static void pstart() {
@@ -495,7 +643,7 @@ public class JDBCClient {
 
     private static long pend(String event, String suffix) throws Exception {
         end = System.currentTimeMillis();
-        log(event + " took : " + (end - start) + "ms. " + suffix);
+        log(event + ": " + (end - start) + "ms " + suffix);
         return (end - start);
     }
 
@@ -506,4 +654,5 @@ public class JDBCClient {
         s = s.replace(" ", "&nbsp;");
         return s;
     }
+
 }
