@@ -3,12 +3,16 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.sql.*;
 import java.util.Date;
 import java.util.*;
 import java.util.stream.Collectors;
 
 public class JDBCClient {
+
+    public static final String VERSION = "1.1";
 
     @Retention(RetentionPolicy.RUNTIME)
     public @interface Exposed {
@@ -162,7 +166,7 @@ public class JDBCClient {
             for (int i = 0; i < args.length; i++) {
                 String arg = args[i];
                 if (!fields.containsKey(arg)) {
-                    log("unknown argument: " + arg);
+                    System.out.println("unknown argument: " + arg);
                     System.exit(0);
                 }
                 Field field = fields.get(arg);
@@ -278,7 +282,7 @@ public class JDBCClient {
                 }
                 Method method = opt.get();
                 if (!method.isAnnotationPresent(Exposed.class)) {
-                    log(on[0] + " is not exposed");
+                    System.out.println(on[0] + " is not exposed");
                 }
                 return String.format(
                         "// %s\n" +
@@ -318,14 +322,14 @@ public class JDBCClient {
         pstart();
         conn = DriverManager.getConnection(jdbcUrl, user, password);
 
-        $("<pre>")
+        $("<div><pre>")
                 .$("JDBC connection string : ").$(jdbcUrl).$("\n")
                 .$("Driver : ").$(jdbcUrl).$("\n")
                 .$("User : ").$(user).$("\n")
-                .$("Connecting to DB took : ").$(pend("Connecting to DB")).$("\n")
-                .$("</pre>");
+                .$("Connecting to DB took : ").$(pend("connecting to db")).$("\n")
+                .$("</pre></div>");
 
-        log("connection status : [" + ((conn != null) ? "successful" : "failed") + "]");
+        System.out.println("connection status : [" + ((conn != null) ? "successful" : "failed") + "]");
 
         if (!runTimeHook) {
             Runtime.getRuntime().addShutdownHook(new Thread(this::close));
@@ -336,7 +340,7 @@ public class JDBCClient {
     }
 
     public boolean close() {
-        log("\nclosing the connection");
+        clog("\nclosing the connection");
         try {
             conn.close();
             if (fw != null)
@@ -348,6 +352,10 @@ public class JDBCClient {
         return true;
     }
 
+    private static void clog(String s) {
+        System.out.println(s);
+    }
+
     private boolean executeSql(String query) throws Exception {
         return stmt.execute(query);
     }
@@ -357,6 +365,7 @@ public class JDBCClient {
     private BufferedReader sc;
 
     public static void main(String args[]) throws Exception {
+        System.out.printf("jdbcc version (%s)\n", VERSION);
         new JDBCClient(args).shell();
     }
 
@@ -387,10 +396,17 @@ public class JDBCClient {
             try {
                 fw = new FileWriter(recordFile);
             } catch (Exception e) {
-                log("Failed to open " + recordFile + " " + e.getMessage());
+                clog("Failed to open " + recordFile + " " + e.getMessage());
                 e.printStackTrace();
             }
-            log("Logging to " + recordFile);
+            clog("logging to " + recordFile);
+            $("<style>")
+                    .$("div { padding: 5px 20px; margin: 20px 0px; }")
+                    .$(".input { background: #f8f8f8; padding: 5px 0px; }")
+                    .$(".output { margin-top: 5px; }")
+                    .$(".processing {  }")
+                    .$("pre {margin: 0px}")
+                    .$("</style>");
         }
 
         conf.transformers.put("BLOB", new BClobToString());
@@ -399,10 +415,17 @@ public class JDBCClient {
 
     public void shell() throws Exception {
 
+        System.out.println("shell started... ");
+
         connect(conf.url, conf.user, conf.password);
         stmt = conn.createStatement();
 
-        log("Type help; for shell help");
+        $("<pre>");
+        debug("Client info: " + conn.getClientInfo());
+        debug("Type map: " + conn.getTypeMap().toString());
+        $("</pre>");
+
+        clog("Type help; for shell help");
 
         do {
             boolean status = false;
@@ -412,12 +435,17 @@ public class JDBCClient {
             if (query == null)
                 return;
 
-            query = query.trim();
+            if (query.trim().isEmpty())
+                continue;
 
-            debug("Text read from console: " + query);
+            query = query.trim();
+            cdebug("Text read from console: " + query);
+
             if (query.equals("help")) {
                 query = "!help()";
             }
+
+            $("<div>").$("<pre class='input'>").$("<b>").$(htmlize(query)).$("</b></pre><pre class='processing'>");
 
             boolean sql = !query.startsWith("!");
             String executionMode = (sql ? "sql" : "java code");
@@ -435,7 +463,9 @@ public class JDBCClient {
             } catch (Exception e) {
                 e.printStackTrace();
             }
-            long etime = pend(executionMode + " execution", "(status: " + (status ? "successful" : "failed") + ")");
+            long ellapse = pend(executionMode + " execution", "(status: " + (status ? "successful" : "failed") + ")");
+
+            $("Time: ").$((((double) ellapse) / 1000)).$("s</pre><pre class='output'>");
 
             if (status) {
                 try {
@@ -447,15 +477,21 @@ public class JDBCClient {
                         rs = stmt.getResultSet();
                     }
                     if (rs != null) {
-                        printResult(query, etime, rs);
+                        printResult(rs);
                     } else {
-                        System.out.println(result);
+                        $(htmlize(result.toString()));
                     }
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
             }
+            $("</pre></div>");
         } while (true);
+    }
+
+    private void cdebug(String s) {
+        if (conf.debug)
+            clog(s);
     }
 
     /* short hand for record */
@@ -473,12 +509,8 @@ public class JDBCClient {
         return this;
     }
 
-    String javac;
-    long idx = System.currentTimeMillis();
-
-    String newClassName() {
-        return "Class" + (++idx);
-    }
+    static String javac;
+    static long idx = System.currentTimeMillis();
 
     Object processJavaCode(DatabaseMetaData dbm, String code) throws Exception {
 
@@ -491,7 +523,7 @@ public class JDBCClient {
             debug("javac = " + javac);
         }
 
-        String cls = newClassName(), jfile = cls + ".java";
+        String cls = "Class" + (++idx), jfile = cls + ".java";
         FileWriter fw = new FileWriter(jfile);
 
         code = String.format(
@@ -524,8 +556,11 @@ public class JDBCClient {
             caller.init(this);
             return caller.call();
         } catch (ClassNotFoundException cnf) {
-            log("Error while compiling the code");
+            clog("Error while compiling the code");
             return null;
+        } finally {
+            Files.delete(Paths.get(jfile));
+            Files.delete(Paths.get(cls + ".class"));
         }
     }
 
@@ -535,17 +570,12 @@ public class JDBCClient {
         }
     }
 
-    private void printResult(String query, long time, ResultSet rset) throws Exception {
+    private void printResult(ResultSet rset) throws Exception {
 
         if (rset == null || conf.resultPrintLimit == 0)
             return;
 
-        $("<pre>")
-                .$("<b>").$(htmlize(query)).$("</b>")
-                .$("\n")
-                .$("Time: ").$((((double) time) / 1000))
-                .$("</pre>")
-                .$("<table border='1' style='border-collapse: collapse;'>");
+        $("<table border='1' style='border-collapse: collapse;'>");
 
         /* print cols headers */
         String coln;
@@ -611,12 +641,13 @@ public class JDBCClient {
         pend(String.format("%d rows (%s), time", rows, ((conf.resultPrintLimit == -1 || rows < conf.resultPrintLimit) ? "all" : "limited")));
     }
 
-    private static void log(Object o) {
-        System.out.println(o.toString());
+    private void log(Object o) {
+        clog(o.toString());
+        $(o.toString()).$("\n");
     }
 
-    private String readQuery() throws IOException {
-        String line, prompt = "jdbcc> ";
+    private String readQuery() throws Exception {
+        String line, prompt = String.format("jdbcc> ");
         StringBuilder sb = new StringBuilder();
         int i = 1;
         do {
@@ -643,7 +674,7 @@ public class JDBCClient {
 
     private static long pend(String event, String suffix) throws Exception {
         end = System.currentTimeMillis();
-        log(event + ": " + (end - start) + "ms " + suffix);
+        clog(event + ": " + (end - start) + "ms " + suffix);
         return (end - start);
     }
 
