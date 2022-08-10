@@ -103,21 +103,23 @@ MPATAKIC         |null             |
 ### Modifying shell config
 ```
 jdbcc> !conf;
-java code execution: 750ms (status: successful)
-transformers = {BLOB=JDBCClient$BClobToString@1810399e, CLOB=JDBCClient$BClobToString@32d992b2}
-resultPrintLimit = 10
-record = false
-debug = false
-noLineNumbers = false
+java code execution: 762ms (status: successful)
+transformers = {BLOB=JDBCClient$BClobToString@6276ae34, CLOB=JDBCClient$BClobToString@7946e1f4}  # Column transformers, specify as columnName=transformerClassName
+resultPrintLimit = 10           # Number of records to print from result set
+record = false                  # Enables recording to HTML file
+debug = false                   # Enables debug logging
+noLineNumbers = false           # Disables line number printing in shell
 
 jdbcc> !conf.debug = true;
 java code execution: 602ms (status: successful)
 true
 
 jdbcc> !conf;
-transformers = {BLOB=JDBCClient$BClobToString@1810399e, CLOB=JDBCClient$BClobToString@32d992b2}
-resultPrintLimit = 10
-record = false
-debug = true
-noLineNumbers = false
+...
+java code execution: 762ms (status: successful)
+transformers = {BLOB=JDBCClient$BClobToString@6276ae34, CLOB=JDBCClient$BClobToString@7946e1f4}  # Column transformers, specify as columnName=transformerClassName
+resultPrintLimit = 10           # Number of records to print from result set
+record = false                  # Enables recording to HTML file
+debug = true                   # Enables debug logging
+noLineNumbers = false           # Disables line number printing in shell
 ```
