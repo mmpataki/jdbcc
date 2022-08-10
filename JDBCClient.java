@@ -119,7 +119,7 @@ public class JDBCClient {
         public String toString() {
             return Arrays.stream(getClass().getDeclaredFields()).filter(f -> __debug || f.isAnnotationPresent(Exposed.class)).map(f -> {
                 try {
-                    return String.format("%s = %s", f.getName(), f.get(this));
+                    return String.format("  %-30s  # %s", String.format("%s = %s", f.getName(), f.get(this)), f.getAnnotation(Argument.class).help());
                 } catch (IllegalAccessException e) {
                     return "";
                 }
@@ -479,6 +479,7 @@ public class JDBCClient {
                     if (rs != null) {
                         printResult(rs);
                     } else {
+                        System.out.println(result.toString());
                         $(htmlize(result.toString()));
                     }
                 } catch (Exception e) {
