@@ -1,6 +1,6 @@
 # jdbcc
 
-Simple, stupid jdbc client which has the following features
+Simple, stupid jdbc client for running SQL and JDBC APIs with following features
 - Not driver specific
 - Recording sessions in HTML feature
 	- records SQL, query run time, results
