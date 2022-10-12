@@ -413,14 +413,15 @@ public class JDBCClient {
         conf.transformers.put("CLOB", new BClobToString());
     }
 
-    public void listProps(Object o, String objname) {
+    public void listProps(Object o, Class<?> cls, String objname) {
         debug(objname);
-        for (Method m : o.getClass().getMethods()) {
-            if((m.getName().startsWith("get") || m.getName().startsWith("is")) && m.getParameterCount() == 0) {
+        for (Method m : cls.getDeclaredMethods()) {
+            String rett = m.getReturnType().toString();
+            if (m.getParameterCount() == 0 && ((!rett.startsWith("class ") && !rett.startsWith("interface ") && !rett.equals("void")) || rett.startsWith("class java.lang.String"))) {
                 try {
                     debug(String.format("\t%s: %s", m.getName(), m.invoke(o)));
                 } catch (Exception e) {
-                    debug(String.format("\t%s() failed", m.getName()));
+                    debug(String.format("\t%s() failed [%s]", m.getName(), e.getMessage()));
                 }
             }
         }
@@ -435,8 +436,8 @@ public class JDBCClient {
 
         if (conf.debug) {
             $("<pre>");
-            listProps(conn, "connection");
-            listProps(conn.getMetaData(), "databasemetadata");
+            listProps(conn, Connection.class, "connection");
+            listProps(conn.getMetaData(), DatabaseMetaData.class, "databasemetadata");
             $("</pre>");
         }
 
