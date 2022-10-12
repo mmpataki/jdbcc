@@ -414,7 +414,7 @@ public class JDBCClient {
     }
 
     public void listProps(Object o, Class<?> cls, String objname) {
-        debug(objname);
+        debug(objname + " properties");
         for (Method m : cls.getDeclaredMethods()) {
             String rett = m.getReturnType().toString();
             if (m.getParameterCount() == 0 && ((!rett.startsWith("class ") && !rett.startsWith("interface ") && !rett.equals("void")) || rett.startsWith("class java.lang.String"))) {
