@@ -413,6 +413,19 @@ public class JDBCClient {
         conf.transformers.put("CLOB", new BClobToString());
     }
 
+    public void listProps(Object o, String objname) {
+        debug(objname);
+        for (Method m : o.getClass().getMethods()) {
+            if((m.getName().startsWith("get") || m.getName().startsWith("is")) && m.getParameterCount() == 0) {
+                try {
+                    debug(String.format("\t%s: %s", m.getName(), m.invoke(o)));
+                } catch (Exception e) {
+                    debug(String.format("\t%s() failed", m.getName()));
+                }
+            }
+        }
+    }
+
     public void shell() throws Exception {
 
         System.out.println("shell started... ");
@@ -420,10 +433,12 @@ public class JDBCClient {
         connect(conf.url, conf.user, conf.password);
         stmt = conn.createStatement();
 
-        $("<pre>");
-        debug("Client info: " + conn.getClientInfo());
-        debug("Type map: " + conn.getTypeMap().toString());
-        $("</pre>");
+        if (conf.debug) {
+            $("<pre>");
+            listProps(conn, "connection");
+            listProps(conn.getMetaData(), "databasemetadata");
+            $("</pre>");
+        }
 
         clog("Type help; for shell help");
 
